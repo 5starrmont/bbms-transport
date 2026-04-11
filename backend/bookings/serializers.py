@@ -12,13 +12,23 @@ class RouteSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class ScheduleSerializer(serializers.ModelSerializer):
-    # These show the nested details instead of just the ID numbers
-    bus = BusSerializer(read_only=True)
-    route = RouteSerializer(read_only=True)
+    bus_details = BusSerializer(source='bus', read_only=True)
+    route_details = RouteSerializer(source='route', read_only=True)
+    # This field will return a list of integers, e.g., [2, 15, 20]
+    booked_seats = serializers.SerializerMethodField()
 
     class Meta:
         model = Schedule
-        fields = '__all__'
+        fields = [
+            'id', 'bus', 'route', 'departure_time', 'price', 
+            'bus_details', 'route_details', 'booked_seats'
+        ]
+
+    def get_booked_seats(self, obj):
+        # We only want to show seats as "taken" if the booking is PENDING or PAID
+        return list(obj.bookings.filter(
+            status__in=['PENDING', 'PAID']
+        ).values_list('seat_number', flat=True))
 
 class BookingSerializer(serializers.ModelSerializer):
     class Meta:
