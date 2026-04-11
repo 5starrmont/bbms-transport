@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.http import FileResponse # Added for PDF streaming
 from .models import Bus, Route, Schedule, Booking, Payment
 from .serializers import (
     BusSerializer, 
@@ -10,6 +11,7 @@ from .serializers import (
     PaymentSerializer
 )
 from .mpesa import MpesaClient
+from .utils import generate_ticket_pdf # We will create this file next
 import os
 
 class BusViewSet(viewsets.ModelViewSet):
@@ -28,6 +30,23 @@ class BookingViewSet(viewsets.ModelViewSet):
     queryset = Booking.objects.all()
     serializer_class = BookingSerializer
 
+    @action(detail=True, methods=['get'])
+    def download_ticket(self, request, pk=None):
+        try:
+            # We only allow downloads for PAID bookings
+            booking = Booking.objects.get(pk=pk, status='PAID')
+            pdf_buffer = generate_ticket_pdf(booking)
+            return FileResponse(
+                pdf_buffer, 
+                as_attachment=True, 
+                filename=f"BBMS_Ticket_{booking.id}.pdf"
+            )
+        except Booking.DoesNotExist:
+            return Response(
+                {"error": "Paid booking not found or payment pending."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
 class PaymentViewSet(viewsets.ModelViewSet):
     queryset = Payment.objects.all()
     serializer_class = PaymentSerializer
@@ -39,7 +58,10 @@ class PaymentViewSet(viewsets.ModelViewSet):
         booking_id = request.data.get('booking_id')
         
         if not phone_number or not amount or not booking_id:
-            return Response({"error": "phone_number, amount, and booking_id are required"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "phone_number, amount, and booking_id are required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         try:
             booking = Booking.objects.get(id=booking_id)
@@ -49,9 +71,14 @@ class PaymentViewSet(viewsets.ModelViewSet):
         client = MpesaClient()
         callback_url = os.getenv('MPESA_CALLBACK_URL')
         
-        response = client.stk_push(phone_number, amount, callback_url)
+        formatted_phone = phone_number
+        if formatted_phone.startswith('0'):
+            formatted_phone = '254' + formatted_phone[1:]
+        elif formatted_phone.startswith('+254'):
+            formatted_phone = formatted_phone[1:]
+
+        response = client.stk_push(formatted_phone, int(float(amount)), callback_url)
         
-        # Link the MerchantRequestID to the booking using our new model field
         if response.get('ResponseCode') == '0':
             merchant_id = response.get('MerchantRequestID')
             booking.merchant_request_id = merchant_id
@@ -62,46 +89,37 @@ class PaymentViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], authentication_classes=[], permission_classes=[])
     def callback(self, request):
-        # Safaricom sends data inside a 'Body' -> 'stkCallback' structure
         data = request.data.get('Body', {}).get('stkCallback', {})
         result_code = data.get('ResultCode')
         merchant_request_id = data.get('MerchantRequestID')
         
         if result_code == 0:
-            # Success! Extract metadata list
             items = data.get('CallbackMetadata', {}).get('Item', [])
-            
-            # Convert list of dicts to a single flat dictionary for easier access
             metadata = {item['Name']: item.get('Value') for item in items}
             
             receipt = metadata.get('MpesaReceiptNumber')
             amount = metadata.get('Amount')
             phone = metadata.get('PhoneNumber')
 
-            # Find the booking linked to this MerchantRequestID using our new field
             try:
                 booking = Booking.objects.get(merchant_request_id=merchant_request_id)
                 booking.status = 'PAID'
                 booking.save()
 
-                # Create the payment record
                 Payment.objects.create(
                     booking=booking,
                     amount=amount,
                     transaction_id=receipt,
                     phone_number=phone
                 )
-                print(f"--- DATABASE UPDATED ---")
-                print(f"Booking {booking.id} marked as PAID. Receipt: {receipt}")
+                print(f"Payment Success: Booking {booking.id} PAID. Receipt: {receipt}")
 
             except Booking.DoesNotExist:
-                print(f"--- ERROR ---")
-                print(f"Callback received for unknown MerchantRequestID: {merchant_request_id}")
+                print(f"Error: Unknown MerchantRequestID: {merchant_request_id}")
             
             return Response({"ResultCode": 0, "ResultDesc": "Success"})
         
         else:
             result_desc = data.get('ResultDesc')
-            print(f"--- PAYMENT FAILED/CANCELLED ---")
-            print(f"Code: {result_code} | Reason: {result_desc}")
+            print(f"Payment Failed: {result_desc} (Code: {result_code})")
             return Response({"ResultCode": 0, "ResultDesc": "Acknowledged"})
