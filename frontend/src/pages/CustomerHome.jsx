@@ -2,23 +2,22 @@ import { useState, useEffect } from 'react';
 import ScheduleList from '../components/ScheduleList';
 import SeatMap from '../components/SeatMap';
 import api from '../api';
-import { Bus, MapPin, ArrowLeft, CheckCircle2, Phone, Search as SearchIcon, Loader2, Download } from 'lucide-react';
+import { Bus, MapPin, ArrowLeft, CheckCircle2, Phone, Mail, Search as SearchIcon, Loader2, Download } from 'lucide-react';
 
 export default function CustomerHome() {
   const [selectedSchedule, setSelectedSchedule] = useState(null);
   const [selectedSeat, setSelectedSeat] = useState(null);
   const [passengerName, setPassengerName] = useState('');
+  const [passengerEmail, setPassengerEmail] = useState(''); 
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isBooked, setIsBooked] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [paymentStatus, setPaymentStatus] = useState('WAITING'); // WAITING, PAID
+  const [paymentStatus, setPaymentStatus] = useState('WAITING');
   const [currentBookingId, setCurrentBookingId] = useState(null);
 
-  // Search State
   const [searchOrigin, setSearchOrigin] = useState('');
   const [searchDestination, setSearchDestination] = useState('');
 
-  // Polling logic to check if the booking status has changed to PAID
   useEffect(() => {
     let interval;
     if (isBooked && currentBookingId && paymentStatus === 'WAITING') {
@@ -32,7 +31,7 @@ export default function CustomerHome() {
         } catch (err) {
           console.error("Polling error:", err);
         }
-      }, 3000); // Poll every 3 seconds
+      }, 3000);
     }
     return () => clearInterval(interval);
   }, [isBooked, currentBookingId, paymentStatus]);
@@ -46,6 +45,7 @@ export default function CustomerHome() {
       const bookingRes = await api.post('bookings/', {
         schedule: selectedSchedule.id,
         passenger_name: passengerName,
+        passenger_email: passengerEmail || null, // Send null if empty
         seat_number: selectedSeat,
         status: 'PENDING'
       });
@@ -67,7 +67,7 @@ export default function CustomerHome() {
       }
     } catch (err) {
       console.error("Process failed:", err.response?.data || err.message);
-      alert("Something went wrong. Please check your phone number and try again.");
+      alert("Something went wrong. Please check your details and try again.");
     } finally {
       setLoading(false);
     }
@@ -80,10 +80,10 @@ export default function CustomerHome() {
     setPaymentStatus('WAITING');
     setCurrentBookingId(null);
     setPassengerName('');
+    setPassengerEmail('');
     setPhoneNumber('');
   };
 
-  // Helper to handle PDF download
   const handleDownload = () => {
     window.open(`${api.defaults.baseURL}bookings/${currentBookingId}/download_ticket/`, '_blank');
   };
@@ -161,7 +161,8 @@ export default function CustomerHome() {
                 </div>
                 <h2 className="text-3xl font-bold mb-2 text-green-400">Success!</h2>
                 <p className="text-slate-400 mb-8">
-                    Your payment for Seat #{selectedSeat} has been received. Have a great journey!
+                    Your payment for Seat #{selectedSeat} has been received. 
+                    {passengerEmail ? ` Your ticket has been sent to ${passengerEmail}.` : " Your ticket confirmation has been sent via SMS."}
                 </p>
                 <div className="flex flex-col gap-3">
                     <button 
@@ -201,6 +202,12 @@ export default function CustomerHome() {
 
               <form onSubmit={handleBooking} className="space-y-4">
                 <input required value={passengerName} onChange={(e) => setPassengerName(e.target.value)} type="text" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 outline-none focus:border-purple-500 transition-all placeholder:text-slate-600" placeholder="Full Name" />
+                
+                <div className="relative">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+                  <input value={passengerEmail} onChange={(e) => setPassengerEmail(e.target.value)} type="email" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 pl-10 outline-none focus:border-purple-500 transition-all placeholder:text-slate-600" placeholder="Email Address (Optional)" />
+                </div>
+
                 <div className="relative">
                   <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
                   <input required value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} type="tel" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 pl-10 outline-none focus:border-purple-500 transition-all placeholder:text-slate-600" placeholder="0712345678" />
