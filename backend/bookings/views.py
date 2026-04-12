@@ -1,7 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.http import FileResponse # Added for PDF streaming
+from django.http import FileResponse
 from .models import Bus, Route, Schedule, Booking, Payment
 from .serializers import (
     BusSerializer, 
@@ -11,7 +11,7 @@ from .serializers import (
     PaymentSerializer
 )
 from .mpesa import MpesaClient
-from .utils import generate_ticket_pdf # We will create this file next
+from .utils import generate_ticket_pdf, send_ticket_email, send_ticket_sms # Added send_ticket_sms
 import os
 
 class BusViewSet(viewsets.ModelViewSet):
@@ -33,13 +33,12 @@ class BookingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def download_ticket(self, request, pk=None):
         try:
-            # We only allow downloads for PAID bookings
             booking = Booking.objects.get(pk=pk, status='PAID')
             pdf_buffer = generate_ticket_pdf(booking)
             return FileResponse(
                 pdf_buffer, 
                 as_attachment=True, 
-                filename=f"BBMS_Ticket_{booking.id}.pdf"
+                filename=f"TwendeBus_Ticket_{booking.id}.pdf"
             )
         except Booking.DoesNotExist:
             return Response(
@@ -113,6 +112,23 @@ class PaymentViewSet(viewsets.ModelViewSet):
                     phone_number=phone
                 )
                 print(f"Payment Success: Booking {booking.id} PAID. Receipt: {receipt}")
+
+                # --- TRIGGER NOTIFICATIONS ---
+                
+                # 1. Send SMS (Mandatory confirmation)
+                try:
+                    send_ticket_sms(booking)
+                except Exception as e:
+                    print(f"SMS Notification Failed: {str(e)}")
+
+                # 2. Send Email (Optional - only if provided)
+                if booking.passenger_email:
+                    try:
+                        pdf_buffer = generate_ticket_pdf(booking)
+                        send_ticket_email(booking, pdf_buffer)
+                        print(f"Email sent successfully to {booking.passenger_email}")
+                    except Exception as e:
+                        print(f"Email Notification Failed: {str(e)}")
 
             except Booking.DoesNotExist:
                 print(f"Error: Unknown MerchantRequestID: {merchant_request_id}")

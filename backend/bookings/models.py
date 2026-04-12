@@ -36,10 +36,13 @@ class Booking(models.Model):
 
     schedule = models.ForeignKey(Schedule, on_delete=models.CASCADE, related_name='bookings')
     passenger_name = models.CharField(max_length=100)
+    # email is now explicitly allowed to be blank
+    passenger_email = models.EmailField(max_length=254, null=True, blank=True) 
     seat_number = models.PositiveIntegerField()
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='PENDING')
-    # Added this field to track M-Pesa transactions
     merchant_request_id = models.CharField(max_length=255, null=True, blank=True, db_index=True)
+    # Added field to track if the SMS was successfully sent
+    sms_sent = models.BooleanField(default=False) 
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -48,7 +51,7 @@ class Booking(models.Model):
 class Payment(models.Model):
     booking = models.OneToOneField(Booking, on_delete=models.CASCADE, related_name='payment')
     amount = models.DecimalField(max_digits=10, decimal_places=2)
-    transaction_id = models.CharField(max_length=100, unique=True, null=True, blank=True) # M-Pesa Receipt
+    transaction_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
     phone_number = models.CharField(max_length=15)
     paid_at = models.DateTimeField(auto_now_add=True)
 

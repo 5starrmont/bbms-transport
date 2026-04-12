@@ -33,6 +33,7 @@ class ScheduleSerializer(serializers.ModelSerializer):
 class BookingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Booking
+        # fields = '__all__' will now automatically pick up passenger_email
         fields = '__all__'
 
 class PaymentSerializer(serializers.ModelSerializer):
