@@ -138,12 +138,15 @@ export default function CustomerHome() {
           </div>
 
           <div className="absolute inset-0 flex flex-col items-center pointer-events-none">
-            <button 
-                onClick={executeScroll}
-                className="absolute bottom-[22%] px-24 py-7 bg-[#0f172a] border border-slate-700 rounded-full font-black text-white text-xl hover:bg-purple-600 hover:border-purple-400 transition-all shadow-[0_0_60px_rgba(0,0,0,1)] backdrop-blur-md flex items-center gap-3 pointer-events-auto active:scale-95 group z-50 cursor-pointer ring-2 ring-slate-800/50"
-            >
-                Book Now <ArrowDown className="w-6 h-6 group-hover:translate-y-1 transition-transform" />
-            </button>
+            <div className="absolute bottom-[22%] flex flex-col items-center gap-4">
+              <button 
+                  onClick={executeScroll}
+                  className="px-24 py-7 bg-[#0f172a] border border-slate-700 rounded-full font-black text-white text-xl hover:bg-purple-600 hover:border-purple-400 transition-all shadow-[0_0_60px_rgba(0,0,0,1)] backdrop-blur-md flex items-center gap-3 pointer-events-auto active:scale-95 group z-50 cursor-pointer ring-2 ring-slate-800/50"
+              >
+                  Book Now <ArrowDown className="w-6 h-6 group-hover:translate-y-1 transition-transform" />
+              </button>
+              <span className="text-slate-500 text-xs font-bold tracking-[0.3em] uppercase animate-pulse">Click to Scroll</span>
+            </div>
           </div>
 
           {/* HARMONIZED BRAND FOOTER MASK - Matching Spline Colors */}
