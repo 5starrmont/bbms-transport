@@ -5,6 +5,7 @@ import AdminDashboard from './pages/AdminDashboard';
 import OperatorDashboard from './pages/OperatorDashboard';
 import OperatorBooking from './pages/OperatorBooking';
 import BookingPOS from './pages/BookingPOS';
+import ManagerDashboard from './pages/ManagerDashboard'; // ✅ New Import
 
 function App() {
   return (
@@ -14,7 +15,7 @@ function App() {
           {/* Public Customer View - No Login Required */}
           <Route path="/" element={<CustomerHome />} />
           
-          {/* Operator Login */}
+          {/* Unified Login for Operators and Managers */}
           <Route path="/admin/login" element={<AdminLogin />} />
           
           {/* Protected Operator Dashboard */}
@@ -22,6 +23,9 @@ function App() {
 
           {/* Dedicated Operator Console */}
           <Route path="/operator/dashboard" element={<OperatorDashboard />} />
+
+          {/* Global Manager Console */}
+          <Route path="/manager/dashboard" element={<ManagerDashboard />} />
 
           {/* POS Selection Page (List of Journeys) */}
           <Route path="/operator/pos" element={<BookingPOS />} />

@@ -15,16 +15,14 @@ def generate_ticket_pdf(booking):
     p = canvas.Canvas(buffer, pagesize=A6)
     width, height = A6
 
-    # Brand Colors
     brand_purple = HexColor("#7c3aed")
     dark_bg = HexColor("#0f172a")
     text_slate = HexColor("#64748b")
 
-    # --- Header Background ---
+    # Header Background
     p.setFillColor(dark_bg)
     p.rect(0, height - 30*mm, width, 30*mm, fill=1, stroke=0)
     
-    # --- Brand Name ---
     p.setFillColor(HexColor("#ffffff"))
     p.setFont("Helvetica-Bold", 16)
     p.drawString(10*mm, height - 12*mm, "TwendeBus") 
@@ -33,7 +31,7 @@ def generate_ticket_pdf(booking):
     p.setFillColor(HexColor("#a78bfa"))
     p.drawString(10*mm, height - 17*mm, "YOUR JOURNEY, SIMPLIFIED") 
 
-    # --- Trip Schedule Section ---
+    # Departure Info Block
     p.setFillColor(HexColor("#f8fafc"))
     p.rect(0, height - 50*mm, width, 20*mm, fill=1, stroke=0)
     
@@ -50,48 +48,52 @@ def generate_ticket_pdf(booking):
     p.drawString(10*mm, height - 43*mm, dep_date.upper())
     p.drawString(55*mm, height - 43*mm, dep_time)
 
-    # --- Passenger & Route ---
+    # Details Section
     p.setFillColor(text_slate)
     p.setFont("Helvetica", 8)
     p.drawString(10*mm, height - 60*mm, "PASSENGER NAME")
     p.drawString(10*mm, height - 72*mm, "ROUTE")
+    p.drawString(10*mm, height - 84*mm, "BUS PLATE") # Added Bus Plate Label
 
     p.setFillColor(dark_bg)
     p.setFont("Helvetica-Bold", 9)
     p.drawString(10*mm, height - 65*mm, booking.passenger_name.upper())
-    p.drawString(10*mm, height - 77*mm, f"{booking.schedule.route.origin} >> {booking.schedule.route.destination}")
+    p.drawString(10*mm, height - 77*mm, f"{booking.schedule.origin} >> {booking.schedule.destination}")
+    p.drawString(10*mm, height - 89*mm, f"{booking.schedule.bus.bus_number}") # Added Bus Plate Number
 
-    # --- Seat Badge ---
+    # Seat Box
     p.setFillColor(brand_purple)
-    p.roundRect(width - 30*mm, height - 78*mm, 20*mm, 18*mm, 3, fill=1, stroke=0)
+    p.roundRect(width - 30*mm, height - 85*mm, 20*mm, 18*mm, 3, fill=1, stroke=0)
     p.setFillColor(HexColor("#ffffff"))
     p.setFont("Helvetica-Bold", 6)
-    p.drawCentredString(width - 20*mm, height - 65*mm, "SEAT")
+    p.drawCentredString(width - 20*mm, height - 72*mm, "SEAT")
     p.setFont("Helvetica-Bold", 14)
-    p.drawCentredString(width - 20*mm, height - 73*mm, str(booking.seat_number))
+    p.drawCentredString(width - 20*mm, height - 80*mm, str(booking.seat_number))
 
-    # --- QR Code Generation ---
     payment = Payment.objects.filter(booking=booking).first()
     receipt_no = payment.transaction_id if payment else "N/A"
     
+    # QR Code
     qr_data = f"TICKET_ID:{booking.id}|RECEIPT:{receipt_no}|SEAT:{booking.seat_number}"
     qr = qrcode.QRCode(version=1, box_size=10, border=0)
     qr.add_data(qr_data)
     qr.make(fit=True)
     img_qr = qr.make_image(fill_color="black", back_color="white")
     
-    p.drawInlineImage(img_qr, width/2 - 15*mm, 20*mm, width=30*mm, height=30*mm)
+    # Position QR code slightly lower to make room for bus plate
+    p.drawInlineImage(img_qr, width/2 - 15*mm, 18*mm, width=30*mm, height=30*mm)
 
-    # --- Footer Info ---
+    # Footer
     p.setDash(2, 2)
     p.setStrokeColor(HexColor("#cbd5e1"))
-    p.line(10*mm, 18*mm, width - 10*mm, 18*mm)
+    p.line(10*mm, 15*mm, width - 10*mm, 15*mm)
     
     p.setFillColor(text_slate)
     p.setFont("Helvetica", 7)
-    p.drawCentredString(width/2, 12*mm, f"M-PESA REF: {receipt_no}")
+    # Changed from M-PESA REF to generic REF
+    p.drawCentredString(width/2, 10*mm, f"REF: {receipt_no}")
     p.setFont("Helvetica-Oblique", 6)
-    p.drawCentredString(width/2, 8*mm, "Please present this QR code for scanning during boarding.")
+    p.drawCentredString(width/2, 6*mm, "Please present this QR code for scanning during boarding.")
 
     p.showPage()
     p.save()
@@ -100,14 +102,14 @@ def generate_ticket_pdf(booking):
     return buffer
 
 def send_ticket_email(booking, pdf_buffer):
-    """Sends ticket PDF via email if an email address exists."""
     if not booking.passenger_email:
         return
 
-    subject = f"Your TwendeBus Ticket - {booking.schedule.route.origin} to {booking.schedule.route.destination}"
+    subject = f"Your TwendeBus Ticket - {booking.schedule.origin} to {booking.schedule.destination}"
     body = (
         f"Hello {booking.passenger_name},\n\n"
         f"Thank you for choosing TwendeBus! Your journey is confirmed.\n\n"
+        f"Bus Plate: {booking.schedule.bus.bus_number}\n"
         f"Departure: {booking.schedule.departure_time.strftime('%d %b, %Y at %I:%M %p')}\n"
         f"Seat: {booking.seat_number}\n\n"
         f"Please find your boarding pass attached to this email.\n\n"
@@ -124,7 +126,6 @@ def send_ticket_email(booking, pdf_buffer):
     email.send()
 
 def send_ticket_sms(booking):
-    """Sends a clean, organized confirmation SMS via Africa's Talking."""
     username = os.getenv('AT_USERNAME')
     api_key = os.getenv('AT_API_KEY')
     
@@ -139,19 +140,18 @@ def send_ticket_sms(booking):
     if not payment:
         return
 
-    # Formatted details
     travel_date = booking.schedule.departure_time.strftime('%d %b, %Y')
     travel_time = booking.schedule.departure_time.strftime('%I:%M %p')
     
     message = (
         f"TwendeBus Confirmed!\n\n"
-        f"Passenger: {booking.passenger_name}\n"
+        f"Bus: {booking.schedule.bus.bus_number}\n"
         f"Ticket: #{booking.id}\n"
-        f"Route: {booking.schedule.route.origin} - {booking.schedule.route.destination}\n"
+        f"Route: {booking.schedule.origin} - {booking.schedule.destination}\n"
         f"Date: {travel_date}\n"
         f"Time: {travel_time}\n"
         f"Seat: {booking.seat_number}\n"
-        f"Receipt: {payment.transaction_id}\n\n"
+        f"Ref: {payment.transaction_id}\n\n"
         f"Safe Journey!"
     )
 
@@ -164,6 +164,6 @@ def send_ticket_sms(booking):
         sms.send(message, [phone])
         booking.sms_sent = True
         booking.save()
-        print(f"Organized SMS Sent to {phone}")
+        print(f"SMS Sent to {phone}")
     except Exception as e:
         print(f"SMS Failed: {str(e)}")

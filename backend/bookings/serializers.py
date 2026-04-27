@@ -70,6 +70,8 @@ class BookingSerializer(serializers.ModelSerializer):
 
 class PaymentSerializer(serializers.ModelSerializer):
     passenger_name = serializers.ReadOnlyField(source='booking.passenger_name')
+    # Added for Manager Dashboard Financial Ledger to show origin of sale
+    origin_name = serializers.ReadOnlyField(source='booking.schedule.origin.name')
 
     class Meta:
         model = Payment
@@ -77,6 +79,7 @@ class PaymentSerializer(serializers.ModelSerializer):
             'id', 
             'booking', 
             'passenger_name', 
+            'origin_name',
             'amount', 
             'transaction_id', 
             'phone_number', 
@@ -89,4 +92,12 @@ class OperatorProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = OperatorProfile
-        fields = ['id', 'username', 'phone_number', 'station', 'station_name', 'is_active_operator']
+        fields = [
+            'id', 
+            'username', 
+            'phone_number', 
+            'station', 
+            'station_name', 
+            'is_active_operator',
+            'is_manager' # Added for Manager Dashboard access
+        ]

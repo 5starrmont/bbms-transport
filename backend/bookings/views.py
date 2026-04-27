@@ -17,6 +17,7 @@ from .serializers import (
 from .mpesa import MpesaClient
 from .utils import generate_ticket_pdf, send_ticket_email, send_ticket_sms
 import os
+import re
 
 class StationViewSet(viewsets.ModelViewSet):
     queryset = Station.objects.all()
@@ -29,9 +30,16 @@ class BusViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = Bus.objects.all()
-        station_id = self.request.query_params.get('at_station')
-        if station_id:
-            queryset = queryset.filter(current_location_id=station_id)
+        # Managers see all buses. Operators only see buses at their station.
+        user_profile = getattr(self.request.user, 'operator_profile', None)
+        is_manager = getattr(user_profile, 'is_manager', False)
+
+        if not is_manager:
+            station_id = self.request.query_params.get('at_station')
+            if station_id:
+                queryset = queryset.filter(current_location_id=station_id)
+            elif user_profile and user_profile.station:
+                queryset = queryset.filter(current_location=user_profile.station)
         return queryset
 
     def destroy(self, request, *args, **kwargs):
@@ -77,6 +85,8 @@ class ScheduleViewSet(viewsets.ModelViewSet):
 
         try:
             profile = request.user.operator_profile
+            # Managers must specify an origin if they create a schedule, 
+            # otherwise it defaults to their station.
             origin_station = profile.station
         except Exception:
             return Response({"error": "Only authorized operators can create schedules."}, status=403)
@@ -115,14 +125,12 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timezone.timedelta(days=1)
 
-        # Departures: ONLY show 'SCHEDULED' trips for today.
         departures = Schedule.objects.filter(
             origin=station,
             departure_time__range=(today_start, today_end),
             status='SCHEDULED'
         ).select_related('bus', 'destination').order_by('departure_time')
 
-        # Arrivals: ONLY show trips that have actually 'DEPARTED' from their origin.
         arrivals = Schedule.objects.filter(
             destination=station,
             status='DEPARTED'
@@ -166,16 +174,19 @@ class ScheduleViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def admin_list(self, request):
-        try:
-            station = request.user.operator_profile.station
-        except Exception:
-            return Response({"error": "No station assigned"}, status=400)
+        user_profile = getattr(request.user, 'operator_profile', None)
+        is_manager = getattr(user_profile, 'is_manager', False)
 
-        # FIX: Remove .exclude(status='ARRIVED') so they show in history
-        # Filter for trips where THIS station is either the Origin OR the Destination
-        queryset = Schedule.objects.filter(
-            Q(origin=station) | Q(destination=station)
-        ).select_related('bus', 'origin', 'destination').order_by('-departure_time')
+        if is_manager:
+            # Manager sees EVERYTHING for company history
+            queryset = Schedule.objects.all().select_related('bus', 'origin', 'destination').order_by('-departure_time')
+        else:
+            station = user_profile.station if user_profile else None
+            if not station:
+                return Response({"error": "No station assigned"}, status=400)
+            queryset = Schedule.objects.filter(
+                Q(origin=station) | Q(destination=station)
+            ).select_related('bus', 'origin', 'destination').order_by('-departure_time')
 
         destination = request.query_params.get('destination')
         date = request.query_params.get('date')
@@ -204,16 +215,38 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         schedule_id = request.data.get('schedule')
+        booking_status = request.data.get('status', 'PENDING')
+        
         try:
             schedule = Schedule.objects.get(id=schedule_id)
             if schedule.status != 'SCHEDULED' or schedule.departure_time < timezone.now():
-                return Response(
-                    {"error": "Booking is closed for this trip."}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return Response({"error": "Booking is closed for this trip."}, status=400)
         except Schedule.DoesNotExist:
-            pass
-        return super().create(request, *args, **kwargs)
+            return Response({"error": "Schedule not found"}, status=404)
+
+        with transaction.atomic():
+            response = super().create(request, *args, **kwargs)
+            
+            if response.status_code == 201 and booking_status == 'PAID':
+                booking = Booking.objects.get(id=response.data['id'])
+                phone = request.data.get('passenger_phone') or request.data.get('phone_number')
+
+                Payment.objects.create(
+                    booking=booking,
+                    amount=schedule.price,
+                    transaction_id=f"CASH-{booking.id}-{timezone.now().strftime('%y%m%d%H%M')}",
+                    phone_number=phone
+                )
+                
+                try: send_ticket_sms(booking)
+                except: pass
+                if booking.passenger_email:
+                    try:
+                        pdf = generate_ticket_pdf(booking)
+                        send_ticket_email(booking, pdf)
+                    except: pass
+            
+            return response
 
     @action(detail=True, methods=['get'], authentication_classes=[], permission_classes=[])
     def download_ticket(self, request, pk=None):
@@ -230,12 +263,19 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def verify_ticket(self, request, pk=None):
+        booking_id = pk
+        if isinstance(pk, str) and 'TICKET_ID:' in pk:
+            match = re.search(r'TICKET_ID:(\d+)', pk)
+            if match:
+                booking_id = match.group(1)
+
         try:
-            booking = Booking.objects.get(pk=pk)
+            booking = Booking.objects.get(pk=booking_id)
             active_schedule_id = request.data.get('schedule_id')
+            
             if active_schedule_id and str(booking.schedule.id) != str(active_schedule_id):
                 return Response({
-                    "error": f"Wrong Bus! This ticket is for {booking.schedule.origin.name} to {booking.schedule.destination.name}"
+                    "error": f"Wrong Bus! Ticket is for {booking.schedule.origin.name} to {booking.schedule.destination.name}"
                 }, status=status.HTTP_400_BAD_REQUEST)
 
             if booking.status != 'PAID':
@@ -254,22 +294,39 @@ class BookingViewSet(viewsets.ModelViewSet):
                 "bus": booking.schedule.bus.bus_number,
                 "route": f"{booking.schedule.origin.name} to {booking.schedule.destination.name}"
             })
-        except Booking.DoesNotExist:
-            return Response({"error": "Invalid ticket QR code."}, status=status.HTTP_404_NOT_FOUND)
+        except (Booking.DoesNotExist, ValueError):
+            return Response({"error": "Invalid ticket QR code or ID."}, status=status.HTTP_404_NOT_FOUND)
 
 class PaymentViewSet(viewsets.ModelViewSet):
     queryset = Payment.objects.all().order_by('-paid_at')
     serializer_class = PaymentSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.IsAuthenticated]
 
-    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def get_queryset(self):
+        user_profile = getattr(self.request.user, 'operator_profile', None)
+        if getattr(user_profile, 'is_manager', False):
+            return Payment.objects.all().order_by('-paid_at')
+        return Payment.objects.filter(booking__schedule__origin=user_profile.station).order_by('-paid_at')
+
+    @action(detail=False, methods=['get'])
     def stats(self, request):
         today = timezone.now().date()
-        today_revenue = Payment.objects.filter(paid_at__date=today).aggregate(Sum('amount'))['amount__sum'] or 0
-        today_count = Payment.objects.filter(paid_at__date=today).count()
+        user_profile = getattr(request.user, 'operator_profile', None)
+        is_manager = getattr(user_profile, 'is_manager', False)
+
+        if is_manager:
+            queryset = Payment.objects.all()
+        else:
+            queryset = Payment.objects.filter(booking__schedule__origin=user_profile.station)
+
+        today_revenue = queryset.filter(paid_at__date=today).aggregate(Sum('amount'))['amount__sum'] or 0
+        total_revenue = queryset.aggregate(Sum('amount'))['amount__sum'] or 0
+        
         return Response({
             "today_revenue": today_revenue,
-            "today_count": today_count
+            "total_revenue": total_revenue, # Global revenue for Manager
+            "today_count": queryset.filter(paid_at__date=today).count(),
+            "active_tickets": Booking.objects.filter(status='PAID', is_checked_in=False).count()
         })
 
     @action(detail=False, methods=['post'])
@@ -346,13 +403,15 @@ class UserProfileViewSet(viewsets.ViewSet):
             profile = user.operator_profile
             return Response({
                 "username": user.username,
-                "station": profile.station.name if profile.station else None,
+                "station": profile.station.name if profile.station else "Global Operations",
                 "station_id": profile.station.id if profile.station else None,
-                "is_operator": profile.is_active_operator
+                "is_operator": profile.is_active_operator,
+                "is_manager": profile.is_manager
             })
         except AttributeError:
             return Response({
                 "username": user.username,
                 "station": None,
-                "is_operator": user.is_staff or user.is_superuser
+                "is_operator": user.is_staff or user.is_superuser,
+                "is_manager": user.is_superuser
             })

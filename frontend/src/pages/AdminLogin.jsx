@@ -16,16 +16,29 @@ export default function AdminLogin() {
     setError('');
 
     try {
-      // Hit your Django SimpleJWT endpoint
+      // 1. Get Tokens
       const res = await api.post('token/', { username, password });
       
-      // Store the tokens
       localStorage.setItem('access_token', res.data.access);
       localStorage.setItem('refresh_token', res.data.refresh);
-      localStorage.setItem('is_operator', 'true');
       
-      // Push to the dashboard
-      navigate('/operator/dashboard');
+      // 2. Fetch Profile to check if Manager or Operator
+      const profileRes = await api.get('user/profile/', {
+        headers: { Authorization: `Bearer ${res.data.access}` }
+      });
+
+      const { is_manager } = profileRes.data;
+
+      // 3. Conditional Redirection
+      if (is_manager) {
+        localStorage.setItem('role', 'manager');
+        navigate('/manager/dashboard');
+      } else {
+        localStorage.setItem('role', 'operator');
+        localStorage.setItem('is_operator', 'true');
+        navigate('/operator/dashboard');
+      }
+
     } catch (err) {
       console.error("Login Error:", err);
       setError('Invalid credentials. Access denied.');
@@ -54,7 +67,7 @@ export default function AdminLogin() {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500" 
-              placeholder="admin_user" 
+              placeholder="" 
             />
           </div>
           <div>
@@ -65,7 +78,7 @@ export default function AdminLogin() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500" 
-              placeholder="••••••••" 
+              placeholder="" 
             />
           </div>
 

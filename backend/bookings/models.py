@@ -100,9 +100,12 @@ class OperatorProfile(models.Model):
         Station, 
         on_delete=models.SET_NULL, 
         null=True, 
+        blank=True, # Managers don't need a station
         related_name='operators'
     )
     is_active_operator = models.BooleanField(default=True)
+    is_manager = models.BooleanField(default=False) # ✅ Added for Manager Dashboard access
 
     def __str__(self):
-        return f"{self.user.username} @ {self.station}"
+        role = "Manager" if self.is_manager else f"Op @ {self.station}"
+        return f"{self.user.username} ({role})"
