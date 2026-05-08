@@ -115,15 +115,33 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         try:
             profile = request.user.operator_profile
             station = profile.station
+            is_manager = getattr(profile, 'is_manager', False)
         except Exception:
             return Response({"error": "Operator profile or station not found"}, status=404)
-
-        if not station:
-            return Response({"error": "No station assigned to this operator"}, status=400)
 
         now = timezone.now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timezone.timedelta(days=1)
+
+        # FIXED: Logic for Manager (Global Board) vs Operator (Local Board)
+        if is_manager:
+            departures = Schedule.objects.filter(
+                departure_time__range=(today_start, today_end),
+                status='SCHEDULED'
+            ).select_related('bus', 'origin', 'destination').order_by('departure_time')
+
+            arrivals = Schedule.objects.filter(
+                status='DEPARTED'
+            ).select_related('bus', 'origin', 'destination').order_by('departure_time')
+            
+            return Response({
+                "station": "Global HQ",
+                "departures": ScheduleSerializer(departures, many=True).data,
+                "arrivals": ScheduleSerializer(arrivals, many=True).data
+            })
+
+        if not station:
+            return Response({"error": "No station assigned to this operator"}, status=400)
 
         departures = Schedule.objects.filter(
             origin=station,

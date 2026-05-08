@@ -283,6 +283,17 @@ export default function OperatorDashboard() {
     }
   }, [activeTab, isScanning]);
 
+  useEffect(() => {
+  const syncRole = (e) => {
+    if (e.key === 'user_role') {
+      // If the role changed in another tab, refresh or kick to login
+      window.location.reload(); 
+    }
+  };
+  window.addEventListener('storage', syncRole);
+  return () => window.removeEventListener('storage', syncRole);
+}, []);
+
   const tabs = [
     { id: 'dashboard', label: 'Station Board', icon: LayoutDashboard },
     { id: 'booking_pos', label: 'Booking POS', icon: Ticket },
